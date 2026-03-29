@@ -3,13 +3,12 @@ import streamlit.components.v1 as components
 import json
 import csv
 import re
-import base64
 from io import StringIO
 from pathlib import Path
 from datetime import datetime, date
 
 # =========================================================
-# Psychological Assessment System - Web Version
+# AI-Based Decision Fatigue Assessment System - Web Version
 # =========================================================
 
 BASE_DIR = Path(__file__).resolve().parent

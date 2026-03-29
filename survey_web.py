@@ -1,7 +1,9 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import json
 import csv
 import re
+import base64
 from io import StringIO
 from pathlib import Path
 from datetime import datetime, date
@@ -12,6 +14,7 @@ from datetime import datetime, date
 
 BASE_DIR = Path(__file__).resolve().parent
 QUESTIONS_FILE = BASE_DIR / "questions.json"
+ALL_RESULTS_FILE = BASE_DIR / "saved_results_history.json"
 
 VALID_NAME_PATTERN = r"^[A-Za-z\s\-']+$"
 GENDER_OPTIONS = ("Male", "Female", "Other", "Prefer not to say")
@@ -44,8 +47,11 @@ example_frozenset = frozenset({"txt", "csv", "json"})
 if "latest_result" not in st.session_state:
     st.session_state["latest_result"] = None
 
+if "average_sleep_raw" not in st.session_state:
+    st.session_state["average_sleep_raw"] = ""
+
 st.set_page_config(
-    page_title="Psychological Assessment System",
+    page_title="AI-Based Decision Fatigue Assessment System",
     page_icon="🧠",
     layout="wide"
 )
@@ -64,23 +70,23 @@ st.markdown("""
 }
 
 .block-container {
-    padding-top: 1.8rem;
-    padding-bottom: 3rem;
-    max-width: 1400px;
+    padding-top: 1.4rem;
+    padding-bottom: 2.6rem;
+    max-width: 1380px;
 }
 
 .main-title {
-    font-size: 3.25rem;
+    font-size: 3.15rem;
     font-weight: 800;
     color: #25324a;
-    margin-bottom: 0.25rem;
+    margin-bottom: 0.2rem;
     letter-spacing: -0.02em;
 }
 
 .subtitle {
-    font-size: 1.2rem;
+    font-size: 1.12rem;
     color: #596883;
-    margin-bottom: 1.2rem;
+    margin-bottom: 1rem;
 }
 
 .hero-box {
@@ -88,37 +94,37 @@ st.markdown("""
     backdrop-filter: blur(10px);
     border: 1px solid rgba(255,255,255,0.55);
     border-radius: 26px;
-    padding: 26px 28px;
+    padding: 24px 26px;
     box-shadow: 0 12px 30px rgba(31, 59, 115, 0.08);
-    margin-bottom: 1rem;
+    margin-bottom: 0.9rem;
 }
 
 .info-box {
     background: rgba(255,255,255,0.82);
     backdrop-filter: blur(8px);
     border-radius: 20px;
-    padding: 18px 20px;
+    padding: 16px 18px;
     box-shadow: 0 8px 22px rgba(0,0,0,0.05);
     border-left: 6px solid #7ea6ff;
-    margin-bottom: 1rem;
+    margin-bottom: 0.9rem;
 }
 
 .section-card {
     background: rgba(255,255,255,0.84);
     backdrop-filter: blur(8px);
     border-radius: 22px;
-    padding: 22px;
+    padding: 20px;
     box-shadow: 0 8px 22px rgba(0,0,0,0.05);
-    margin-bottom: 1.2rem;
+    margin-bottom: 1rem;
 }
 
 .question-box {
     background: rgba(255,255,255,0.88);
     backdrop-filter: blur(6px);
     border-radius: 18px;
-    padding: 16px 18px;
+    padding: 15px 17px;
     box-shadow: 0 6px 18px rgba(0,0,0,0.045);
-    margin-bottom: 14px;
+    margin-bottom: 12px;
     border: 1px solid rgba(110, 143, 214, 0.10);
     transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
@@ -151,13 +157,13 @@ st.markdown("""
 .fact-card {
     background: rgba(255,255,255,0.84);
     border-radius: 22px;
-    padding: 22px;
+    padding: 20px;
     box-shadow: 0 8px 22px rgba(0,0,0,0.05);
     margin-bottom: 1rem;
 }
 
 .fact-title {
-    font-size: 1.45rem;
+    font-size: 1.35rem;
     font-weight: 800;
     color: #28406b;
     margin-bottom: 0.8rem;
@@ -199,12 +205,20 @@ st.markdown("""
     margin-bottom: 0.9rem;
 }
 
+.saved-result-card {
+    background: rgba(255,255,255,0.86);
+    border-radius: 18px;
+    padding: 16px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.04);
+    margin-bottom: 12px;
+}
+
 div[data-testid="stSidebar"] {
     background: linear-gradient(180deg, #eef3fb 0%, #f6f8fd 100%);
 }
 
 div[data-testid="stSidebar"] .block-container {
-    padding-top: 1.4rem;
+    padding-top: 1.2rem;
 }
 
 .stDownloadButton > button,
@@ -240,6 +254,21 @@ div[data-testid="stSidebar"] .block-container {
 }
 </style>
 """, unsafe_allow_html=True)
+
+# ---------------------------------------------------------
+# Sound
+# ---------------------------------------------------------
+SUCCESS_SOUND_BASE64 = (
+    "UklGRlQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YTAAAAA="
+)
+
+def play_success_sound():
+    audio_html = f"""
+    <audio autoplay>
+        <source src="data:audio/wav;base64,{SUCCESS_SOUND_BASE64}" type="audio/wav">
+    </audio>
+    """
+    components.html(audio_html, height=0)
 
 # ---------------------------------------------------------
 # Helper functions
@@ -356,6 +385,25 @@ def build_result_record(
         "completion_time": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
         "answer_details": answer_details
     }
+
+def save_result_history(result_data):
+    history = load_saved_history()
+    history.append(result_data)
+    with open(ALL_RESULTS_FILE, "w", encoding="utf-8") as file:
+        json.dump(history, file, indent=4, ensure_ascii=False)
+
+def load_saved_history():
+    if not ALL_RESULTS_FILE.exists():
+        return []
+
+    try:
+        with open(ALL_RESULTS_FILE, "r", encoding="utf-8") as file:
+            data = json.load(file)
+            if isinstance(data, list):
+                return data
+            return []
+    except Exception:
+        return []
 
 def convert_result_to_json_text(result_data):
     return json.dumps(result_data, indent=4, ensure_ascii=False)
@@ -514,16 +562,13 @@ def display_loaded_result(data, title):
     st.write(f"**Interpretation:** {data.get('interpretation', '')}")
     st.write(f"**Completed:** {data.get('completed', '')}")
     st.write(f"**Completion Time:** {data.get('completion_time', '')}")
-    if "answer_details" in data:
-        st.markdown("**Detailed Answers:**")
-        st.write(data["answer_details"])
 
 # ---------------------------------------------------------
 # Header
 # ---------------------------------------------------------
-st.markdown('<div class="main-title">🧠 Psychological Assessment System</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">🧠 AI-Based Decision Fatigue Assessment System</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="subtitle">Decision Fatigue and Mental Overload Survey</div>',
+    '<div class="subtitle">A data-driven psychological evaluation tool for students</div>',
     unsafe_allow_html=True
 )
 
@@ -543,12 +588,6 @@ st.sidebar.markdown("### Survey Purpose")
 st.sidebar.write(
     "This web application explores how repeated choices, academic demands, and cognitive strain may influence a student's current psychological balance."
 )
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("### Did You Know?")
-st.sidebar.write("Decision fatigue does not always feel dramatic. It often begins as slower thinking, less patience, or difficulty making even small everyday choices.")
-st.sidebar.write("Reduced sleep can affect attention, emotional regulation, and confidence in decision-making.")
-st.sidebar.write("Repeated minor choices can gradually drain mental energy, even when each individual task seems simple.")
 
 # ---------------------------------------------------------
 # Main content
@@ -583,8 +622,6 @@ if sidebar_mode == "Start New Questionnaire":
         • No option is selected automatically, so every answer is your own choice.
         </div>
         """, unsafe_allow_html=True)
-
-        st.success(f"questions.json loaded successfully. Total questions: {len(questions)}")
 
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.subheader("Student Information")
@@ -622,6 +659,7 @@ if sidebar_mode == "Start New Questionnaire":
 
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.subheader("Survey Progress")
+
         answered_count = 0
         for i in range(len(questions)):
             if st.session_state.get(f"question_{i+1}") is not None:
@@ -686,7 +724,7 @@ if sidebar_mode == "Start New Questionnaire":
             if year_of_study is None:
                 errors.append("Please select year of study.")
 
-            formatted_sleep_text, average_sleep_hours, sleep_error = normalize_sleep_hours_text(
+            _, average_sleep_hours, sleep_error = normalize_sleep_hours_text(
                 st.session_state.get("average_sleep_raw", "")
             )
             if sleep_error:
@@ -735,16 +773,13 @@ if sidebar_mode == "Start New Questionnaire":
                 )
 
                 st.session_state["latest_result"] = result_data
+                save_result_history(result_data)
 
                 st.balloons()
-
-                st.markdown("""
-                <audio autoplay>
-                  <source src="https://www.soundjay.com/buttons/sounds/button-3.mp3" type="audio/mpeg">
-                </audio>
-                """, unsafe_allow_html=True)
+                play_success_sound()
 
                 st.success("✅ Survey completed successfully.")
+                st.info("This result reflects your current cognitive load based on your responses.")
 
                 st.markdown('<div class="result-box">', unsafe_allow_html=True)
                 st.subheader("Survey Result")
@@ -798,7 +833,7 @@ elif sidebar_mode == "Load Existing Result":
             View Saved Results
         </div>
         <div style="color:#53627c; line-height:1.7; font-size:1.02rem;">
-            You can view your latest result automatically or upload a previously saved TXT, CSV, or JSON file.
+            You can view your latest result automatically, review all previously saved results, or upload a saved TXT, CSV, or JSON file.
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -809,8 +844,30 @@ elif sidebar_mode == "Load Existing Result":
         display_loaded_result(st.session_state["latest_result"], "Latest Result")
         st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown("---")
-        st.markdown("### Or upload another result file")
+    saved_history = load_saved_history()
+
+    if saved_history:
+        st.subheader("All Automatically Saved Results")
+
+        result_labels = []
+        for index, item in enumerate(saved_history, start=1):
+            label = (
+                f"{index}. {item.get('given_name', '')} {item.get('surname', '')} | "
+                f"{item.get('completion_time', '')} | "
+                f"{item.get('psychological_state', '')}"
+            )
+            result_labels.append(label)
+
+        selected_label = st.selectbox("Choose a saved result to review", result_labels)
+        selected_index = result_labels.index(selected_label)
+        selected_result = saved_history[selected_index]
+
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        display_loaded_result(selected_result, "Selected Saved Result")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("### Or upload another result file")
 
     uploaded_file = st.file_uploader(
         "Upload a saved TXT, CSV, or JSON result file",
